@@ -92,6 +92,12 @@ Open your browser at:
 
 ---
 
+## Deploying to Netlify
+
+Use Node.js 24, `npm run build` as the build command, and `dist` as the publish directory. Netlify serves the Vite frontend from `dist` and loads `netlify/server/index.mjs` for `/api/*`. Both local development and Netlify use the same Express routes.
+
+---
+
 ## 🧪 Automated Verification Suite
 
 Run the built-in automated test suite:
@@ -117,10 +123,11 @@ triptales/
 ├── .env.example              # Environment variables template
 ├── supabase/
 │   └── schema.sql            # Complete Supabase schema & RLS policies
+├── netlify/server/index.mjs  # Netlify entry point for /api/*
 ├── server/
-│   ├── index.js              # Express app entry point
+│   ├── index.js              # Local server entry point
+│   ├── app.js                # Shared Express API
 │   ├── routes/
-│   │   ├── chat.js           # Real-time Gemini AI chat endpoint
 │   │   ├── planner.js        # Dynamic itinerary generation endpoint
 │   │   ├── budget.js         # Deterministic budget calculation endpoint
 │   │   ├── weather.js        # Real weather radar endpoint
