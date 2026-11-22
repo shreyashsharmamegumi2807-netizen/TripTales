@@ -26,7 +26,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   setActiveTab, 
   openAuthModal
 }) => {
-  const { user, signOut, isSupabaseActive } = useAuth();
+  const { user, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
@@ -124,7 +124,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <p className="text-sm font-bold text-brand-navy truncate">{user.email}</p>
                       <span className="inline-flex items-center text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full mt-1">
                         <ShieldCheck className="w-3 h-3 mr-1" />
-                        {isSupabaseActive ? 'Supabase Cloud Sync' : 'Local Storage Mode'}
+                        Cloud Sync
                       </span>
                     </div>
 
@@ -153,9 +153,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <div className="border-t border-brand-border my-1"></div>
 
                     <button
-                      onClick={() => {
-                        signOut();
-                        setUserDropdownOpen(false);
+                      onClick={async () => {
+                        const result = await signOut();
+                        if (result.error) window.alert(result.error);
+                        else setUserDropdownOpen(false);
                       }}
                       className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-2"
                     >
@@ -231,9 +232,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <p className="text-xs text-brand-muted truncate">{user.email}</p>
                 </div>
                 <button
-                  onClick={() => {
-                    signOut();
-                    setMobileMenuOpen(false);
+                  onClick={async () => {
+                    const result = await signOut();
+                    if (result.error) window.alert(result.error);
+                    else setMobileMenuOpen(false);
                   }}
                   className="w-full flex items-center space-x-2 px-4 py-2.5 rounded-xl text-red-600 hover:bg-red-50 text-sm font-semibold"
                 >

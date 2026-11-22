@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
-import { AuthModal } from './components/AuthModal';
 import { HomePage } from './pages/HomePage';
 import { PlannerPage } from './pages/PlannerPage';
 import { BudgetPage } from './pages/BudgetPage';
@@ -13,8 +12,16 @@ import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<string>('home');
-  const [authModalOpen, setAuthModalOpen] = useState(false);
+  return <AuthProvider><AppContent /></AuthProvider>;
+}
+
+function AppContent() {
+  const { needsPasswordReset } = useAuth();
+  const [selectedTab, setActiveTab] = useState(() => {
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    return hash.has('confirmation_token') || hash.has('recovery_token') ? 'login' : 'home';
+  });
+  const activeTab = needsPasswordReset ? 'login' : selectedTab;
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
 
   const openAuthModal = (mode: 'signin' | 'signup') => {
@@ -28,50 +35,20 @@ export function App() {
   }, [activeTab]);
 
   return (
-    <AuthProvider>
-      <div className="min-h-screen flex flex-col bg-brand-bg text-brand-text font-sans">
-        
-        {/* Navigation Bar */}
-        <Navbar
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          openAuthModal={openAuthModal}
-        />
-
-        {/* Main Content Area */}
-        <main className="flex-1">
-          {activeTab === 'home' && (
-            <HomePage setActiveTab={setActiveTab} openAuthModal={openAuthModal} />
-          )}
-          {activeTab === 'planner' && (
-            <PlannerPage 
-              openAuthModal={openAuthModal} 
-              setActiveTab={setActiveTab} 
-            />
-          )}
-          {activeTab === 'budget' && <BudgetPage />}
-          {activeTab === 'gems' && <HiddenGemsPage setActiveTab={setActiveTab} />}
-          {activeTab === 'weather' && <WeatherPage />}
-          {activeTab === 'journal' && <JournalPage openAuthModal={openAuthModal} />}
-          {activeTab === 'dashboard' && (
-            <DashboardPage setActiveTab={setActiveTab} openAuthModal={openAuthModal} />
-          )}
-          {activeTab === 'login' && (
-            <LoginPage setActiveTab={setActiveTab} initialMode={authMode} />
-          )}
-        </main>
-
-        {/* Authentication Modal */}
-        <AuthModal
-          isOpen={authModalOpen}
-          onClose={() => setAuthModalOpen(false)}
-          initialMode={authMode}
-        />
-
-        {/* Footer */}
-        <Footer setActiveTab={setActiveTab} />
-      </div>
-    </AuthProvider>
+    <div className="min-h-screen flex flex-col bg-brand-bg text-brand-text font-sans">
+      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} openAuthModal={openAuthModal} />
+      <main className="flex-1">
+        {activeTab === 'home' && <HomePage setActiveTab={setActiveTab} openAuthModal={openAuthModal} />}
+        {activeTab === 'planner' && <PlannerPage openAuthModal={openAuthModal} setActiveTab={setActiveTab} />}
+        {activeTab === 'budget' && <BudgetPage />}
+        {activeTab === 'gems' && <HiddenGemsPage setActiveTab={setActiveTab} />}
+        {activeTab === 'weather' && <WeatherPage />}
+        {activeTab === 'journal' && <JournalPage openAuthModal={openAuthModal} />}
+        {activeTab === 'dashboard' && <DashboardPage setActiveTab={setActiveTab} openAuthModal={openAuthModal} />}
+        {activeTab === 'login' && <LoginPage key={authMode} setActiveTab={setActiveTab} initialMode={authMode} />}
+      </main>
+      <Footer setActiveTab={setActiveTab} />
+    </div>
   );
 }
 

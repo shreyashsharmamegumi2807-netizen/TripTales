@@ -23,7 +23,7 @@ interface JournalPageProps {
 }
 
 export const JournalPage: React.FC<JournalPageProps> = ({ openAuthModal }) => {
-  const { user, journalEntries, createJournalEntry, updateJournalEntry, deleteJournalEntry } = useAuth();
+  const { user, journalEntries, createJournalEntry, updateJournalEntry, deleteJournalEntry, dataError } = useAuth();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -162,6 +162,8 @@ export const JournalPage: React.FC<JournalPageProps> = ({ openAuthModal }) => {
           <span>New Journal Entry</span>
         </button>
       </div>
+
+      {dataError && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{dataError}</p>}
 
       {/* Entries List / Grid */}
       {journalEntries.length === 0 ? (

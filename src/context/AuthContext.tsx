@@ -1,467 +1,267 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { UserProfile, SavedTrip, JournalEntry } from '../types';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import {
+  AUTH_EVENTS, AuthError, getUser, handleAuthCallback, login, logout,
+  onAuthChange, requestPasswordRecovery, signup, updateUser,
+  type User,
+} from '@netlify/identity';
+import { accountRequest, importBrowserRecords } from '../lib/account';
+import type { JournalEntry, SavedTrip, UserProfile } from '../types';
+
+type TripDraft = Omit<SavedTrip, 'id' | 'userId' | 'createdAt'>;
+type JournalDraft = Omit<JournalEntry, 'id' | 'userId' | 'createdAt' | 'updatedAt'>;
+type AuthResult = { error?: string; confirmationRequired?: boolean };
 
 interface AuthContextType {
   user: UserProfile | null;
   loading: boolean;
-  isSupabaseActive: boolean;
-  signIn: (email: string, pass: string) => Promise<{ error?: string }>;
-  signUp: (email: string, pass: string, name: string) => Promise<{ error?: string }>;
-  signOut: () => Promise<void>;
+  needsPasswordReset: boolean;
+  authLinkError: string | null;
+  dataError: string | null;
+  signIn: (email: string, password: string) => Promise<AuthResult>;
+  signUp: (email: string, password: string, name: string) => Promise<AuthResult>;
+  signOut: () => Promise<AuthResult>;
+  requestReset: (email: string) => Promise<AuthResult>;
+  resetPassword: (password: string) => Promise<AuthResult>;
   savedTrips: SavedTrip[];
-  saveTrip: (trip: Omit<SavedTrip, 'id' | 'userId' | 'createdAt'>) => Promise<SavedTrip>;
+  saveTrip: (trip: TripDraft) => Promise<SavedTrip>;
   deleteTrip: (id: string) => Promise<void>;
   journalEntries: JournalEntry[];
-  createJournalEntry: (entry: Omit<JournalEntry, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => Promise<JournalEntry>;
-  updateJournalEntry: (id: string, updates: Partial<JournalEntry>) => Promise<void>;
+  createJournalEntry: (entry: JournalDraft) => Promise<JournalEntry>;
+  updateJournalEntry: (id: string, entry: JournalDraft) => Promise<void>;
   deleteJournalEntry: (id: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const normalizeEmail = (email: string) => email.trim().toLowerCase();
+const confirmationMessage = 'Confirm your email using the link in your inbox before signing in.';
 
-const LOCAL_STORAGE_USERS_KEY = 'triptales_users';
-const LOCAL_STORAGE_SESSION_KEY = 'triptales_session';
-const LOCAL_STORAGE_TRIPS_KEY = 'triptales_saved_trips';
-const LOCAL_STORAGE_JOURNAL_KEY = 'triptales_journal_entries';
+function toProfile(account: User): UserProfile {
+  return {
+    id: account.id,
+    email: account.email ?? '',
+    fullName: account.name || account.email?.split('@')[0] || 'Traveler',
+    createdAt: account.createdAt ?? '',
+  };
+}
+
+function loginError(error: unknown) {
+  if (error instanceof AuthError) {
+    if (/not confirmed|not verified/i.test(error.message)) return confirmationMessage;
+    if (error.status === 400 || error.status === 401 || /invalid.*(credentials|password|grant)/i.test(error.message)) {
+      return 'That email and password didn’t match. Try resetting your password. If you signed up on the older site, create an account with the same email.';
+    }
+  }
+  return 'Sign-in is temporarily unavailable. Please try again.';
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
+  const [needsPasswordReset, setNeedsPasswordReset] = useState(false);
+  const [authLinkError, setAuthLinkError] = useState<string | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const currentUserId = useRef<string | null>(null);
+  const recoveryInProgress = useRef(false);
+  const callback = useRef<ReturnType<typeof handleAuthCallback> | null>(null);
 
-  // 1. Initialize Auth on Mount
-  useEffect(() => {
-    async function initAuth() {
-      try {
-        if (isSupabaseConfigured && supabase) {
-          // Listen to Supabase Auth State
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            setUser({
-              id: session.user.id,
-              email: session.user.email || '',
-              fullName: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Traveler',
-              createdAt: session.user.created_at,
-            });
-            await loadSupabaseUserData(session.user.id);
-          } else {
-            setUser(null);
-            setSavedTrips([]);
-            setJournalEntries([]);
-          }
-
-          supabase.auth.onAuthStateChange(async (_event, session) => {
-            if (session?.user) {
-              setUser({
-                id: session.user.id,
-                email: session.user.email || '',
-                fullName: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Traveler',
-                createdAt: session.user.created_at,
-              });
-              await loadSupabaseUserData(session.user.id);
-            } else {
-              setUser(null);
-              setSavedTrips([]);
-              setJournalEntries([]);
-            }
-          });
-        } else {
-          // Local Storage Mode
-          const savedSession = localStorage.getItem(LOCAL_STORAGE_SESSION_KEY);
-          if (savedSession) {
-            try {
-              const parsedUser = JSON.parse(savedSession);
-              setUser(parsedUser);
-              loadLocalUserData(parsedUser.id);
-            } catch (e) {
-              localStorage.removeItem(LOCAL_STORAGE_SESSION_KEY);
-            }
-          }
-        }
-      } catch (err) {
-        console.error('Auth initialization error:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    initAuth();
-  }, []);
-
-  // 2. Load Data for Supabase
-  const loadSupabaseUserData = async (userId: string) => {
-    if (!supabase) return;
-    try {
-      const { data: tripsData } = await supabase
-        .from('saved_trips')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (tripsData) {
-        setSavedTrips(tripsData.map(t => ({
-          id: t.id,
-          userId: t.user_id,
-          title: t.title,
-          destination: t.destination,
-          startingLocation: t.starting_location,
-          travellers: t.travellers,
-          days: t.days,
-          budget: t.budget,
-          travelDate: t.travel_date,
-          tripType: t.trip_type,
-          preferences: t.preferences,
-          itinerary: t.itinerary,
-          budgetBreakdown: t.budget_breakdown,
-          createdAt: t.created_at
-        })));
-      }
-
-      const { data: journalData } = await supabase
-        .from('travel_journal')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (journalData) {
-        setJournalEntries(journalData.map(j => ({
-          id: j.id,
-          userId: j.user_id,
-          tripTitle: j.trip_title,
-          destination: j.destination,
-          travelDate: j.travel_date,
-          memories: j.memories,
-          highlights: j.highlights,
-          rating: j.rating,
-          photoUrl: j.photo_url,
-          createdAt: j.created_at,
-          updatedAt: j.updated_at
-        })));
-      }
-    } catch (err) {
-      console.error('Error fetching Supabase user data:', err);
-    }
-  };
-
-  // 3. Load Data for Local Storage
-  const loadLocalUserData = (userId: string) => {
-    try {
-      const allTrips: SavedTrip[] = JSON.parse(localStorage.getItem(LOCAL_STORAGE_TRIPS_KEY) || '[]');
-      setSavedTrips(allTrips.filter(t => t.userId === userId));
-
-      const allJournals: JournalEntry[] = JSON.parse(localStorage.getItem(LOCAL_STORAGE_JOURNAL_KEY) || '[]');
-      setJournalEntries(allJournals.filter(j => j.userId === userId));
-    } catch (e) {
+  function applyAccount(account: User | null) {
+    const profile = account?.confirmedAt ? toProfile(account) : null;
+    if (currentUserId.current !== (profile?.id ?? null)) {
       setSavedTrips([]);
       setJournalEntries([]);
+      setDataError(null);
     }
-  };
+    currentUserId.current = profile?.id ?? null;
+    setUser(profile);
+  }
 
-  // 4. Sign Up
-  const signUp = async (email: string, pass: string, name: string) => {
-    if (!email || !pass || !name) {
-      return { error: 'Please provide full name, email, and password.' };
-    }
-    if (pass.length < 6) {
-      return { error: 'Password must be at least 6 characters.' };
-    }
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password: pass,
-        options: {
-          data: { full_name: name }
+    async function restoreAccount() {
+      try {
+        const result = await (callback.current ??= handleAuthCallback());
+        if (!active) return;
+        if (result?.type === 'recovery') {
+          recoveryInProgress.current = true;
+          setNeedsPasswordReset(true);
+        } else {
+          const account = result?.user ?? await getUser();
+          if (!active) return;
+          applyAccount(account);
         }
-      });
-      if (error) return { error: error.message };
-      if (data.user) {
-        const newUser: UserProfile = {
-          id: data.user.id,
-          email: data.user.email || email,
-          fullName: name,
-          createdAt: data.user.created_at
-        };
-        setUser(newUser);
+      } catch {
+        if (!active) return;
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        setAuthLinkError('This account link is invalid or has expired. Try signing in, creating an account, or requesting a new password reset link.');
+      } finally {
+        if (active) {
+          unsubscribe = onAuthChange((event, account) => {
+            if (event === AUTH_EVENTS.LOGOUT) {
+              recoveryInProgress.current = false;
+              setNeedsPasswordReset(false);
+              applyAccount(null);
+            } else if (!recoveryInProgress.current && event !== AUTH_EVENTS.RECOVERY) {
+              applyAccount(account);
+            }
+          });
+          setLoading(false);
+        }
+      }
+    }
+
+    void restoreAccount();
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const owner = user;
+    let active = true;
+    const isCurrent = () => active && currentUserId.current === owner.id;
+
+    async function loadData() {
+      const imported = await importBrowserRecords(owner, isCurrent);
+      if (!isCurrent()) return;
+      try {
+        const [trips, journal] = await Promise.all([
+          accountRequest<SavedTrip[]>(owner.id, 'trips'),
+          accountRequest<JournalEntry[]>(owner.id, 'journal'),
+        ]);
+        if (isCurrent()) {
+          setSavedTrips(trips);
+          setJournalEntries(journal);
+          setDataError(imported ? null : 'Some older records could not be imported. They remain in this browser; sign in again to retry.');
+        }
+      } catch {
+        if (isCurrent()) setDataError('Your saved trips and journal could not load. Refresh to try again.');
+      }
+    }
+
+    void loadData();
+    return () => { active = false; };
+  }, [user?.id, user?.email]);
+
+  async function signIn(email: string, password: string): Promise<AuthResult> {
+    try {
+      const account = await login(normalizeEmail(email), password);
+      if (!account.confirmedAt) return { error: confirmationMessage };
+      setAuthLinkError(null);
+      applyAccount(account);
+      return {};
+    } catch (error) {
+      return { error: loginError(error) };
+    }
+  }
+
+  async function signUp(email: string, password: string, name: string): Promise<AuthResult> {
+    try {
+      const account = await signup(normalizeEmail(email), password, { full_name: name.trim() });
+      setAuthLinkError(null);
+      if (!account.confirmedAt) return { confirmationRequired: true };
+      return signIn(email, password);
+    } catch (error) {
+      if (error instanceof AuthError && /already (registered|exists)|duplicate/i.test(error.message)) {
+        return { error: 'This email may already have an account. Try signing in or resetting your password.' };
+      }
+      return { error: 'We couldn’t create your account. Check your email address and password and try again.' };
+    }
+  }
+
+  async function signOut(): Promise<AuthResult> {
+    try {
+      await logout();
+      applyAccount(null);
+      return {};
+    } catch {
+      return { error: 'We couldn’t sign you out. Please try again.' };
+    }
+  }
+
+  async function requestReset(email: string): Promise<AuthResult> {
+    try {
+      await requestPasswordRecovery(normalizeEmail(email));
+      setAuthLinkError(null);
+      return {};
+    } catch (error) {
+      if (error instanceof AuthError && (error.status === 404 || /user not found/i.test(error.message))) {
+        setAuthLinkError(null);
         return {};
       }
-    } else {
-      // Local storage fallback
-      const users = JSON.parse(localStorage.getItem(LOCAL_STORAGE_USERS_KEY) || '[]');
-      if (users.find((u: any) => u.email.toLowerCase() === email.toLowerCase())) {
-        return { error: 'An account with this email already exists.' };
-      }
+      return { error: 'We couldn’t request a password reset. Please try again.' };
+    }
+  }
 
-      const newUser: UserProfile = {
-        id: 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
-        email: email.trim().toLowerCase(),
-        fullName: name.trim(),
-        createdAt: new Date().toISOString()
-      };
-
-      users.push({ ...newUser, passwordHash: btoa(pass) });
-      localStorage.setItem(LOCAL_STORAGE_USERS_KEY, JSON.stringify(users));
-      localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, JSON.stringify(newUser));
-      setUser(newUser);
-      loadLocalUserData(newUser.id);
+  async function resetPassword(password: string): Promise<AuthResult> {
+    if (!recoveryInProgress.current) return { error: 'Request a new password reset link and try again.' };
+    try {
+      const account = await updateUser({ password });
+      recoveryInProgress.current = false;
+      setNeedsPasswordReset(false);
+      applyAccount(account);
       return {};
+    } catch {
+      return { error: 'We couldn’t change your password. Try again or request a new reset link.' };
     }
+  }
 
-    return {};
-  };
+  function ownerId() {
+    if (!user) throw new Error('Please sign in first.');
+    return user.id;
+  }
 
-  // 5. Sign In
-  const signIn = async (email: string, pass: string) => {
-    if (!email || !pass) {
-      return { error: 'Email and password are required.' };
+  async function saveTrip(content: TripDraft) {
+    const owner = ownerId();
+    const saved = await accountRequest<SavedTrip>(owner, 'trips', 'POST', { content });
+    if (currentUserId.current === owner) setSavedTrips(previous => [saved, ...previous]);
+    return saved;
+  }
+
+  async function deleteTrip(id: string) {
+    const owner = ownerId();
+    await accountRequest(owner, `trips/${encodeURIComponent(id)}`, 'DELETE');
+    if (currentUserId.current === owner) setSavedTrips(previous => previous.filter(trip => trip.id !== id));
+  }
+
+  async function createJournalEntry(content: JournalDraft) {
+    const owner = ownerId();
+    const saved = await accountRequest<JournalEntry>(owner, 'journal', 'POST', { content });
+    if (currentUserId.current === owner) setJournalEntries(previous => [saved, ...previous]);
+    return saved;
+  }
+
+  async function updateJournalEntry(id: string, content: JournalDraft) {
+    const owner = ownerId();
+    const saved = await accountRequest<JournalEntry>(owner, `journal/${encodeURIComponent(id)}`, 'PUT', { content });
+    if (currentUserId.current === owner) {
+      setJournalEntries(previous => previous.map(entry => entry.id === id ? saved : entry));
     }
+  }
 
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password: pass
-      });
-      if (error) return { error: error.message };
-      if (data.user) {
-        const u: UserProfile = {
-          id: data.user.id,
-          email: data.user.email || email,
-          fullName: data.user.user_metadata?.full_name || email.split('@')[0],
-          createdAt: data.user.created_at
-        };
-        setUser(u);
-        await loadSupabaseUserData(u.id);
-        return {};
-      }
-    } else {
-      const users = JSON.parse(localStorage.getItem(LOCAL_STORAGE_USERS_KEY) || '[]');
-      const matched = users.find((u: any) => u.email.toLowerCase() === email.trim().toLowerCase());
-      if (!matched || matched.passwordHash !== btoa(pass)) {
-        return { error: 'Invalid email or password.' };
-      }
-
-      const activeUser: UserProfile = {
-        id: matched.id,
-        email: matched.email,
-        fullName: matched.fullName,
-        createdAt: matched.createdAt
-      };
-      localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, JSON.stringify(activeUser));
-      setUser(activeUser);
-      loadLocalUserData(activeUser.id);
-      return {};
-    }
-
-    return {};
-  };
-
-  // 6. Sign Out
-  const signOut = async () => {
-    if (isSupabaseConfigured && supabase) {
-      await supabase.auth.signOut();
-    }
-    localStorage.removeItem(LOCAL_STORAGE_SESSION_KEY);
-    setUser(null);
-    setSavedTrips([]);
-    setJournalEntries([]);
-  };
-
-  // 7. Save Trip
-  const saveTrip = async (tripData: Omit<SavedTrip, 'id' | 'userId' | 'createdAt'>): Promise<SavedTrip> => {
-    if (!user) throw new Error('You must be logged in to save trips.');
-
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('saved_trips').insert({
-        user_id: user.id,
-        title: tripData.title,
-        destination: tripData.destination,
-        starting_location: tripData.startingLocation,
-        travellers: tripData.travellers,
-        days: tripData.days,
-        budget: tripData.budget,
-        travel_date: tripData.travelDate,
-        trip_type: tripData.tripType,
-        preferences: tripData.preferences,
-        itinerary: tripData.itinerary,
-        budget_breakdown: tripData.budgetBreakdown,
-      }).select().single();
-
-      if (error) throw new Error(error.message);
-
-      const saved: SavedTrip = {
-        id: data.id,
-        userId: data.user_id,
-        title: data.title,
-        destination: data.destination,
-        startingLocation: data.starting_location,
-        travellers: data.travellers,
-        days: data.days,
-        budget: data.budget,
-        travelDate: data.travel_date,
-        tripType: data.trip_type,
-        preferences: data.preferences,
-        itinerary: data.itinerary,
-        budgetBreakdown: data.budget_breakdown,
-        createdAt: data.created_at
-      };
-      setSavedTrips(prev => [saved, ...prev]);
-      return saved;
-    } else {
-      const newTrip: SavedTrip = {
-        ...tripData,
-        id: 'trip_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
-        userId: user.id,
-        createdAt: new Date().toISOString()
-      };
-      const allTrips: SavedTrip[] = JSON.parse(localStorage.getItem(LOCAL_STORAGE_TRIPS_KEY) || '[]');
-      allTrips.unshift(newTrip);
-      localStorage.setItem(LOCAL_STORAGE_TRIPS_KEY, JSON.stringify(allTrips));
-      setSavedTrips(prev => [newTrip, ...prev]);
-      return newTrip;
-    }
-  };
-
-  // 8. Delete Trip
-  const deleteTrip = async (id: string): Promise<void> => {
-    if (!user) throw new Error('You must be logged in.');
-
-    if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase.from('saved_trips').delete().eq('id', id).eq('user_id', user.id);
-      if (error) throw new Error(error.message);
-    } else {
-      const allTrips: SavedTrip[] = JSON.parse(localStorage.getItem(LOCAL_STORAGE_TRIPS_KEY) || '[]');
-      const updated = allTrips.filter(t => !(t.id === id && t.userId === user.id));
-      localStorage.setItem(LOCAL_STORAGE_TRIPS_KEY, JSON.stringify(updated));
-    }
-
-    setSavedTrips(prev => prev.filter(t => t.id !== id));
-  };
-
-  // 9. Create Journal Entry
-  const createJournalEntry = async (entry: Omit<JournalEntry, 'id' | 'userId' | 'createdAt' | 'updatedAt'>): Promise<JournalEntry> => {
-    if (!user) throw new Error('You must be logged in to create journal entries.');
-
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.from('travel_journal').insert({
-        user_id: user.id,
-        trip_title: entry.tripTitle,
-        destination: entry.destination,
-        travel_date: entry.travelDate,
-        memories: entry.memories,
-        highlights: entry.highlights,
-        rating: entry.rating,
-        photo_url: entry.photoUrl
-      }).select().single();
-
-      if (error) throw new Error(error.message);
-
-      const saved: JournalEntry = {
-        id: data.id,
-        userId: data.user_id,
-        tripTitle: data.trip_title,
-        destination: data.destination,
-        travelDate: data.travel_date,
-        memories: data.memories,
-        highlights: data.highlights,
-        rating: data.rating,
-        photoUrl: data.photo_url,
-        createdAt: data.created_at,
-        updatedAt: data.updated_at
-      };
-      setJournalEntries(prev => [saved, ...prev]);
-      return saved;
-    } else {
-      const newEntry: JournalEntry = {
-        ...entry,
-        id: 'jnl_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
-        userId: user.id,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      const allJournals: JournalEntry[] = JSON.parse(localStorage.getItem(LOCAL_STORAGE_JOURNAL_KEY) || '[]');
-      allJournals.unshift(newEntry);
-      localStorage.setItem(LOCAL_STORAGE_JOURNAL_KEY, JSON.stringify(allJournals));
-      setJournalEntries(prev => [newEntry, ...prev]);
-      return newEntry;
-    }
-  };
-
-  // 10. Update Journal Entry
-  const updateJournalEntry = async (id: string, updates: Partial<JournalEntry>): Promise<void> => {
-    if (!user) throw new Error('You must be logged in.');
-
-    if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase.from('travel_journal').update({
-        trip_title: updates.tripTitle,
-        destination: updates.destination,
-        travel_date: updates.travelDate,
-        memories: updates.memories,
-        highlights: updates.highlights,
-        rating: updates.rating,
-        photo_url: updates.photoUrl,
-        updated_at: new Date().toISOString()
-      }).eq('id', id).eq('user_id', user.id);
-
-      if (error) throw new Error(error.message);
-    } else {
-      const allJournals: JournalEntry[] = JSON.parse(localStorage.getItem(LOCAL_STORAGE_JOURNAL_KEY) || '[]');
-      const updated = allJournals.map(j => {
-        if (j.id === id && j.userId === user.id) {
-          return { ...j, ...updates, updatedAt: new Date().toISOString() };
-        }
-        return j;
-      });
-      localStorage.setItem(LOCAL_STORAGE_JOURNAL_KEY, JSON.stringify(updated));
-    }
-
-    setJournalEntries(prev => prev.map(j => j.id === id ? { ...j, ...updates, updatedAt: new Date().toISOString() } : j));
-  };
-
-  // 11. Delete Journal Entry
-  const deleteJournalEntry = async (id: string): Promise<void> => {
-    if (!user) throw new Error('You must be logged in.');
-
-    if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase.from('travel_journal').delete().eq('id', id).eq('user_id', user.id);
-      if (error) throw new Error(error.message);
-    } else {
-      const allJournals: JournalEntry[] = JSON.parse(localStorage.getItem(LOCAL_STORAGE_JOURNAL_KEY) || '[]');
-      const updated = allJournals.filter(j => !(j.id === id && j.userId === user.id));
-      localStorage.setItem(LOCAL_STORAGE_JOURNAL_KEY, JSON.stringify(updated));
-    }
-
-    setJournalEntries(prev => prev.filter(j => j.id !== id));
-  };
+  async function deleteJournalEntry(id: string) {
+    const owner = ownerId();
+    await accountRequest(owner, `journal/${encodeURIComponent(id)}`, 'DELETE');
+    if (currentUserId.current === owner) setJournalEntries(previous => previous.filter(entry => entry.id !== id));
+  }
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        isSupabaseActive: isSupabaseConfigured,
-        signIn,
-        signUp,
-        signOut,
-        savedTrips,
-        saveTrip,
-        deleteTrip,
-        journalEntries,
-        createJournalEntry,
-        updateJournalEntry,
-        deleteJournalEntry,
-      }}
-    >
+    <AuthContext.Provider value={{
+      user, loading, needsPasswordReset, authLinkError, dataError, signIn, signUp, signOut, requestReset, resetPassword,
+      savedTrips, saveTrip, deleteTrip, journalEntries, createJournalEntry, updateJournalEntry, deleteJournalEntry,
+    }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-export const useAuth = () => {
+export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
   return context;
-};
+}

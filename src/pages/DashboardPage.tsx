@@ -27,7 +27,7 @@ interface DashboardPageProps {
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab, openAuthModal }) => {
-  const { user, savedTrips, deleteTrip, journalEntries, isSupabaseActive } = useAuth();
+  const { user, savedTrips, deleteTrip, journalEntries, dataError } = useAuth();
   const [selectedTrip, setSelectedTrip] = useState<SavedTrip | null>(null);
 
   if (!user) {
@@ -67,13 +67,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab, open
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
+      {dataError && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">{dataError}</p>}
       
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-brand-navy via-slate-900 to-blue-950 rounded-3xl p-6 sm:p-10 text-white shadow-card flex flex-col md:flex-row md:items-center md:justify-between gap-6">
         <div className="space-y-2">
           <div className="inline-flex items-center space-x-2 text-xs font-semibold text-emerald-400 bg-emerald-950/60 px-3 py-1 rounded-full border border-emerald-800">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Active Account • {isSupabaseActive ? 'Supabase Sync' : 'Isolated User Store'}</span>
+            <span>Active Account • Cloud Sync</span>
           </div>
           <h1 className="text-3xl sm:text-4xl font-black tracking-tight">
             Welcome back, {user.fullName}!
@@ -204,7 +205,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ setActiveTab, open
 
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
             <p className="font-bold text-slate-800">Database Engine</p>
-            <p className="text-slate-600">{isSupabaseActive ? 'Supabase Connected' : 'Local Storage Mode'}</p>
+            <p className="text-slate-600">Cloud Storage</p>
             <p className="text-[10px] text-slate-400">Row Level Security configured</p>
           </div>
 
