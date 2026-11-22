@@ -5,11 +5,13 @@ import plannerRouter from './routes/planner.js';
 import budgetRouter from './routes/budget.js';
 import weatherRouter from './routes/weather.js';
 import hiddenGemsRouter from './routes/hiddenGems.js';
+import { createAccountRouter } from './routes/account.js';
 
 dotenv.config();
 
 const app = express();
 
+app.use('/api/account', createAccountRouter());
 app.use(cors());
 app.use(express.json());
 
