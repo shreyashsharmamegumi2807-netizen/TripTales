@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563EB' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><path d='m4.93 4.93 4.24 4.24'></path><path d='m14.83 9.17 4.24-4.24'></path><path d='m14.83 14.83 4.24 4.24'></path><path d='m9.17 14.83-4.24 4.24'></path><circle cx='12' cy='12' r='4'></circle></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TripTales — Your AI-Powered Travel Companion</title>
+    <meta name="description" content="Discover destinations, plan smarter journeys, manage your travel budget, and create unforgettable memories with your AI-powered travel companion." />
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      // Graceful fallback if index.html is opened directly from disk (file://) instead of web server
+      if (window.location.protocol === 'file:') {
+        window.addEventListener('DOMContentLoaded', function () {
+          // Check if local server is active, auto-redirect if so
+          fetch('http://localhost:5000/api/health')
+            .then(function (r) { return r.json(); })
+            .then(function () {
+              window.location.href = 'http://localhost:5000';
+            })
+            .catch(function () {
+              document.body.innerHTML = 
+                '<div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; background: #F8FAFC; color: #1E293B; padding: 24px; text-align: center;">' +
+                  '<div style="background: white; border-radius: 28px; padding: 40px; max-width: 480px; box-shadow: 0 10px 30px rgba(0,0,0,0.06); border: 1px solid #E2E8F0;">' +
+                    '<div style="width: 60px; height: 60px; border-radius: 18px; background: #EFF6FF; color: #2563EB; display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; font-size: 30px;">' +
+                      '✈️' +
+                    '</div>' +
+                    '<h1 style="font-size: 24px; font-weight: 800; color: #172554; margin: 0 0 8px;">TripTales Web Launcher</h1>' +
+                    '<p style="font-size: 13px; color: #64748B; margin: 0 0 24px; line-height: 1.6;">' +
+                      'Modern web applications require a local HTTP server for real-time AI API communication and browser security.' +
+                    '</p>' +
+                    '<a href="http://localhost:5000" style="display: block; width: 100%; box-sizing: border-box; background: #2563EB; color: white; text-decoration: none; font-weight: 700; font-size: 14px; padding: 14px 20px; border-radius: 14px; margin-bottom: 12px; box-shadow: 0 4px 14px rgba(37,99,235,0.25);">' +
+                      '👉 Open TripTales (http://localhost:5000)' +
+                    '</a>' +
+                    '<p style="font-size: 12px; color: #94A3B8; margin-top: 18px; line-height: 1.5;">' +
+                      'Tip: Double-click <strong>Start-TripTales.bat</strong> on your Desktop or in the project folder to start the server in 1 click!' +
+                    '</p>' +
+                  '</div>' +
+                '</div>';
+            });
+        });
+      }
+    </script>
+  </head>
+  <body class="bg-brand-bg text-brand-text antialiased selection:bg-brand-light selection:text-brand-primary min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+
+    <!-- Zapier Chatbot Embed -->
+    <script async type="module" src="https://interfaces.zapier.com/assets/web-components/zapier-interfaces/zapier-interfaces.esm.js"></script>
+    <zapier-interfaces-chatbot-embed is-popup="true" chatbot-id="cmwrh53ht0051amfak27vp6do"></zapier-interfaces-chatbot-embed>
+  </body>
+</html>
